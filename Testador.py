@@ -1,71 +1,83 @@
+import tensorflow as tf
+from tensorflow import keras
 import matplotlib.pyplot as plt
-import keras
-from keras import layers
+import numpy as np
+import requests
+from io import BytesIO
+from PIL import Image
+import os
+
+# ============================
+# 1. CARREGAR MODELO TREINADO
+# ============================
+model = keras.models.load_model("Nordestino.keras")
+print("Modelo carregado com sucesso!")
 
 
-image_size = (180, 180)
-batch_size = 128
-
-###Modelo CNN com Blocos Residuais
-def make_model(input_shape, num_classes):
-    inputs = keras.Input(shape=input_shape)
-
-    # Entry block
-    x = layers.Rescaling(1.0 / 255)(inputs)
-    x = layers.Conv2D(128, 3, strides=2, padding="same")(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Activation("relu")(x)
-
-    previous_block_activation = x  # Set aside residual
-
-    for size in [256, 512, 728]:
-        x = layers.Activation("relu")(x)
-        x = layers.SeparableConv2D(size, 3, padding="same")(x)
-        x = layers.BatchNormalization()(x)
-
-        x = layers.Activation("relu")(x)
-        x = layers.SeparableConv2D(size, 3, padding="same")(x)
-        x = layers.BatchNormalization()(x)
-
-        x = layers.MaxPooling2D(3, strides=2, padding="same")(x)
-
-        # Project residual
-        residual = layers.Conv2D(size, 1, strides=2, padding="same")(
-            previous_block_activation
-        )
-        x = layers.add([x, residual])  # Add back residual
-        previous_block_activation = x  # Set aside next residual
-
-    x = layers.SeparableConv2D(1024, 3, padding="same")(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Activation("relu")(x)
-
-    x = layers.GlobalAveragePooling2D()(x)
-    if num_classes == 2:
-        units = 1
+# ============================
+# 2. FUNÇÃO PARA CARREGAR IMAGEM (URL OU ARQUIVO)
+# ============================
+def carregar_imagem(caminho_ou_url, image_size=(180, 180)):
+    # Caso seja URL (começa com http)
+    if caminho_ou_url.startswith("http://") or caminho_ou_url.startswith("https://"):
+        print("Baixando imagem da URL...")
+        resp = requests.get(caminho_ou_url)
+        img = Image.open(BytesIO(resp.content)).convert("RGB")
     else:
-        units = num_classes
+        # arquivo local
+        if not os.path.exists(caminho_ou_url):
+            raise FileNotFoundError(f"Arquivo não encontrado: {caminho_ou_url}")
+        img = Image.open(caminho_ou_url).convert("RGB")
 
-    x = layers.Dropout(0.25)(x)
-    # We specify activation=None so as to return logits
-    outputs = layers.Dense(units, activation=None)(x)
-    return keras.Model(inputs, outputs)
-model = make_model(input_shape=image_size + (3,), num_classes=2)
+    # Redimensiona para o tamanho do modelo
+    img = img.resize(image_size)
+
+    return img
 
 
-loaded_model = keras.saving.load_model("Nordestino.keras")
-img = keras.utils.load_img("Imagens/Teste/Cuscuz.jpg", target_size=image_size)
-img_array = keras.utils.img_to_array(img)
-img_array = keras.ops.expand_dims(img_array, 0)  # Create batch axis
+# ============================
+# 3. FUNÇÃO DE CLASSIFICAÇÃO
+# ============================
+def classificar_imagem(caminho_ou_url, model, image_size=(180, 180)):
+    img = carregar_imagem(caminho_ou_url, image_size)
 
-predictions = model.predict(img_array)
-score = float(keras.ops.sigmoid(predictions[0][0]))
-print(f"Essa imagem parece ser {100 * (1 - score):.2f}% cuscuz and {100 * score:.2f}% Tapioca.")
+    # Mostrar imagem
+    plt.imshow(img)
+    plt.title(f"Imagem carregada")
+    plt.axis("off")
+    plt.show()
 
-img = keras.utils.load_img("Imagens/Teste/Tapioca.jpg", target_size=image_size)
-img_array = keras.utils.img_to_array(img)
-img_array = keras.ops.expand_dims(img_array, 0)  # Create batch axis
+    # Converter para array
+    img_array = keras.utils.img_to_array(img)
+    img_array = tf.expand_dims(img_array, 0)
 
-predictions = model.predict(img_array)
-score = float(keras.ops.sigmoid(predictions[0][0]))
-print(f"Essa imagem parece ser {100 * (1 - score):.2f}% cuscuz and {100 * score:.2f}% Tapioca.")
+    # Predição
+    logits = model.predict(img_array)[0][0]
+    score = float(tf.sigmoid(logits))
+
+    print("\n🔍 RESULTADO DA CLASSIFICAÇÃO")
+    print(f"Logit: {logits:.4f}")
+    print(f"Probabilidade de Tapioca: {100 * score:.2f}%")
+    print(f"Probabilidade de Cuscuz:  {100 * (1 - score):.2f}%")
+
+    if score > 0.5:
+        print("👉 O modelo classifica como **Tapioca**")
+    else:
+        print("👉 O modelo classifica como **Cuscuz**")
+
+    print("-" * 50)
+
+
+# ============================
+# 4. MODO INTERATIVO: PEDIR URL AO USUÁRIO
+# ============================
+while True:
+    entrada = input("\nDigite a URL ou caminho da imagem (ou 'sair'): ")
+
+    if entrada.lower() == "sair":
+        break
+
+    try:
+        classificar_imagem(entrada, model)
+    except Exception as e:
+        print("Erro ao carregar ou processar a imagem:", e)
